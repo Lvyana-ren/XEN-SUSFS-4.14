@@ -142,14 +142,24 @@ def main() -> int:
     call = (
         "#if defined(CONFIG_KSU) && !defined(CONFIG_KSU_TAMPER_SYSCALL_TABLE)\n"
         "\t(void)ksu_handle_setresuid(current_uid().val, ruid);\n"
-        "#endif"
+        "#endif\n"
     )
-    marker = "kuid_t kruid, keuid, ksuid;\n"
-    if sys_text.count(marker) != 1:
-        raise RuntimeError("kernel/sys.c: cannot uniquely locate setresuid local declarations")
-    sys_text = sys_text.replace(marker, marker + call + "\n", 1)
+    func_start = "SYSCALL_DEFINE3(setresuid, uid_t, ruid, uid_t, euid, uid_t, suid)\n{"
+    func_end = "\nSYSCALL_DEFINE3(getresuid,"
+    if sys_text.count(func_start) != 1:
+        raise RuntimeError("kernel/sys.c: expected one setresuid syscall function")
+    func_begin = sys_text.index(func_start)
+    func_finish = sys_text.find(func_end, func_begin)
+    if func_finish < 0:
+        raise RuntimeError("kernel/sys.c: getresuid boundary not found after setresuid")
+    function = sys_text[func_begin:func_finish]
+    ret_anchor = "\treturn commit_creds(new);"
+    if function.count(ret_anchor) != 1:
+        raise RuntimeError("kernel/sys.c: expected one setresuid commit_creds return")
+    function = function.replace(ret_anchor, call + ret_anchor, 1)
+    sys_text = sys_text[:func_begin] + function + sys_text[func_finish:]
     sys_path.write_text(sys_text, encoding="utf-8")
-    report_lines.append("kernel/sys.c: retained setresuid handler with current KSUN (old_uid,new_uid) ABI")
+    report_lines.append("kernel/sys.c: placed current KSUN setresuid hook after UID/security validation and immediately before commit_creds")
 
     # The Anymore reference uses the old SELinux domain name "su"; this
     # KSUN pin identifies its own domain as "ksu". Keep the transition guard
