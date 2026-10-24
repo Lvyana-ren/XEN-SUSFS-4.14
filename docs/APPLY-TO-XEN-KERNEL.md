@@ -11,6 +11,7 @@
 5. Extract the ZIP. The useful files are:
    - `xen-susfs-kernel-integration-candidate.patch` — changes merged without textual conflicts.
    - `reports/target-baseline-commit.txt` — exact Xen-Kernel commit used as the patch base.
+   - `reports/input-refs.txt` — exact base, target, and Xen-SuSFS commit SHAs used for this artifact.
    - `reports/clean-files.txt` — files merged without textual conflicts.
    - `reports/conflicts.txt` and `reports/conflicts/` — files that require manual integration.
    - `README-CANDIDATE.txt` — report generated for that run.
