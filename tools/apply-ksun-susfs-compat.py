@@ -148,7 +148,7 @@ static void ksu_handle_extra_susfs_work(void)
 		pr_err("susfs: failed to add deferred setuid task_work\n");
 	}
 }
-#endif /* CONFIG_KSU_SUSFS */'''
+#endif /* CONFIG_KSU_SUSFS */'''.replace(r"\t", "\t")
 
 SETUID_FUNCTION = r'''int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
 {
@@ -222,7 +222,7 @@ do_susfs_umount:
     susfs_set_current_proc_umounted();
     return 0;
 #endif
-}'''
+}'''.replace(r"\t", "\t")
 
 REBOOT_BRIDGE = r'''#ifdef CONFIG_KSU_SUSFS
 	/*
