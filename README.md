@@ -6,6 +6,14 @@ Porting workspace for **SUSFS v2.3.0** on Xen-Kernel / Poco X3 Pro (vayu), Linux
 
 ## Pinned references
 
+The candidate workflow reads all repository references from [`config/port-refs.env`](config/port-refs.env). It fetches and verifies the exact commit SHA; it does **not** silently use the latest branch tip.
+
+- Base SHA (`AnymoreProject/android_kernel_vayu:16`): `0f8b1c04302094439718fa5d8d9122d9f89a730b`
+- Target SHA (`Lvyana-ren/Xen-Kernel:16-KSUN_SuSFS`): `08f4c4761c14f6b30b5efb6b8bd0b817b39eb1c3`
+- Feature SHA (`Lvyana-ren/Xen-SuSFS:16-ksu`): `67696276f509631e85759d8fdf43e4d90246a281`
+
+Update these pins deliberately in the config file when you intend to change the reference versions; review the resulting diff and artifact afterward.
+
 - Target kernel: [Lvyana-ren/Xen-Kernel, branch `16-KSUN_SuSFS`](https://github.com/Lvyana-ren/Xen-Kernel/tree/16-KSUN_SuSFS)
 - Target baseline head at the time of the initial import: `08f4c4761c14f6b30b5efb6b8bd0b817b39eb1c3`
 - SUSFS source: [Lvyana-ren/Xen-SuSFS, branch `16-ksu`](https://github.com/Lvyana-ren/Xen-SuSFS/tree/16-ksu)
@@ -29,7 +37,7 @@ Porting workspace for **SUSFS v2.3.0** on Xen-Kernel / Poco X3 Pro (vayu), Linux
 
 The complete shell commands, conflict handling, and next steps are documented in **[docs/APPLY-TO-XEN-KERNEL.md](docs/APPLY-TO-XEN-KERNEL.md)**.
 
-The generator does not push to Xen-Kernel or modify the remote target branch. Its output is only a candidate patch; it does not claim that every SUSFS feature is integrated or that a kernel build has passed.
+The generator does not push to Xen-Kernel or modify the remote target branch. It verifies and reports the exact base, target, and feature commit SHAs in `reports/input-refs.txt`. Its output is only a candidate patch; it does not claim that every SUSFS feature is integrated or that a kernel build has passed.
 
 ## Current blockers — read before building
 
