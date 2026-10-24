@@ -54,6 +54,7 @@ jobs:
             "$RUNNER_TEMP/output"
 
           # Save the exact candidate separately from the untouched repository.
+          mkdir -p "$GITHUB_WORKSPACE/port-candidate"
           cp -a "$RUNNER_TEMP/output/." "$GITHUB_WORKSPACE/port-candidate/"
 
       - name: Upload candidate and audit reports
