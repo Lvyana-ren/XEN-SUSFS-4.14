@@ -90,6 +90,140 @@ bool susfs_is_current_ksu_domain(void)
 }
 '''
 
+SETUID_HELPERS = r'''#ifdef CONFIG_KSU_SUSFS
+static inline bool is_zygote_isolated_service_uid(uid_t uid)
+{
+	uid %= 100000;
+	return uid >= 99000 && uid < 100000;
+}
+
+static inline bool is_zygote_normal_app_uid(uid_t uid)
+{
+	uid %= 100000;
+	return uid >= 10000 && uid < 20000;
+}
+
+extern struct work_struct susfs_extra_works;
+#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
+extern void susfs_try_umount(uid_t uid);
+#endif
+
+struct susfs_handle_setuid_tw {
+	struct callback_head cb;
+};
+
+static void susfs_handle_setuid_tw_func(struct callback_head *cb)
+{
+	struct susfs_handle_setuid_tw *tw =
+		container_of(cb, struct susfs_handle_setuid_tw, cb);
+
+	if (ksu_cred) {
+		const struct cred *saved = override_creds(ksu_cred);
+		revert_creds(saved);
+	}
+	kfree(tw);
+}
+
+static void ksu_handle_extra_susfs_work(void)
+{
+	struct susfs_handle_setuid_tw *tw;
+
+	if (!ksu_cred)
+		return;
+
+	tw = kzalloc(sizeof(*tw), GFP_ATOMIC);
+	if (!tw) {
+		pr_err("susfs: not enough memory for deferred work\n");
+		return;
+	}
+
+	if (!schedule_work(&susfs_extra_works)) {
+		kfree(tw);
+		return;
+	}
+
+	tw->cb.func = susfs_handle_setuid_tw_func;
+	if (task_work_add(current, &tw->cb, TWA_RESUME)) {
+		kfree(tw);
+		pr_err("susfs: failed to add deferred setuid task_work\n");
+	}
+}
+#endif /* CONFIG_KSU_SUSFS */'''
+
+SETUID_FUNCTION = r'''int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
+{
+    // We only process zygote-originated UID transitions for SUSFS.
+#ifdef CONFIG_KSU_SUSFS
+    if (!is_zygote(current_cred()))
+        return 0;
+#endif
+
+    pr_info("handle_setresuid from %d to %d\n", old_uid, new_uid);
+
+    if (unlikely(is_uid_manager(new_uid))) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+        if (current->seccomp.mode == SECCOMP_MODE_FILTER && current->seccomp.filter) {
+            ksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);
+        }
+#else
+        disable_seccomp();
+#endif
+
+#ifdef KSU_KPROBES_HOOK
+        ksu_set_task_tracepoint_flag(current);
+#endif
+        pr_info("install fd for manager: %d\n", new_uid);
+        ksu_install_fd();
+        return 0;
+    }
+
+#ifdef CONFIG_KSU_SUSFS
+    /*
+     * Match the legacy SUSFS flow: isolated service UIDs need isolation too,
+     * while normal app UIDs are processed when the global KSU policy requests
+     * mount isolation. Run these before ordinary allowlist handling.
+     */
+    if (is_zygote_isolated_service_uid(new_uid) ||
+        (is_zygote_normal_app_uid(new_uid) && ksu_uid_should_umount(new_uid)))
+        goto do_susfs_umount;
+#endif
+
+    if (ksu_is_allow_uid_for_current(new_uid)) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+        if (current->seccomp.mode == SECCOMP_MODE_FILTER && current->seccomp.filter) {
+            ksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);
+        }
+#else
+        disable_seccomp();
+#endif
+
+#ifdef KSU_KPROBES_HOOK
+        ksu_set_task_tracepoint_flag(current);
+#endif
+    } else {
+#ifdef KSU_KPROBES_HOOK
+        ksu_clear_task_tracepoint_flag_if_needed(current);
+#endif
+    }
+
+#ifndef CONFIG_KSU_SUSFS
+    ksu_handle_umount(old_uid, new_uid);
+#endif
+    return 0;
+
+#ifdef CONFIG_KSU_SUSFS
+do_susfs_umount:
+#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
+    susfs_try_umount(new_uid);
+#else
+    ksu_handle_umount(old_uid, new_uid);
+#endif
+    ksu_handle_extra_susfs_work();
+    susfs_set_current_proc_umounted();
+    return 0;
+#endif
+}'''
+
 REBOOT_BRIDGE = r'''#ifdef CONFIG_KSU_SUSFS
 	/*
 	 * XEN-SUSFS-KSUN-COMPAT: syscall bridge
@@ -242,6 +376,8 @@ def main() -> int:
     kbuild_path = root / "kernel/Kbuild"
     selinux_path = root / "kernel/selinux/selinux.c"
     umount_path = root / "kernel/feature/kernel_umount.c"
+    init_path = root / "kernel/core/init.c"
+    setuid_path = root / "kernel/hook/setuid_hook.c"
 
     kconfig = read_text(kconfig_path)
     supercall = read_text(supercall_path)
@@ -249,6 +385,8 @@ def main() -> int:
     kbuild = read_text(kbuild_path)
     selinux = read_text(selinux_path)
     umount = read_text(umount_path)
+    init = read_text(init_path)
+    setuid = read_text(setuid_path)
 
     markers = [
         "XEN-SUSFS-KSUN-COMPAT-BEGIN" in kconfig,
@@ -257,6 +395,8 @@ def main() -> int:
         "XEN-SUSFS-KSUN-COMPAT-BEGIN" in kbuild,
         "XEN-SUSFS-KSUN-COMPAT: adapt the SUSFS domain helper" in selinux,
         "XEN-SUSFS-KSUN-COMPAT: expose try_umount" in umount,
+        "XEN-SUSFS-KSUN-COMPAT: init" in init,
+        "XEN-SUSFS-KSUN-COMPAT: setuid runtime" in setuid,
     ]
     if all(markers):
         print("XEN-SUSFS KSUN compatibility bridge is already applied.")
@@ -341,6 +481,67 @@ def main() -> int:
         "kernel umount exported helper"
     )
 
+    # Initialize SUSFS once after KSUN's normal startup path. The source init
+    # sets up the work item used by the setresuid transition below.
+    init_include_anchor = '#include "feature/adb_root.h"\n'
+    init = replace_once(
+        init, init_include_anchor,
+        init_include_anchor + "\n#ifdef CONFIG_KSU_SUSFS\n"
+        + "#include <linux/susfs.h> /* XEN-SUSFS-KSUN-COMPAT: init include */\n"
+        + "#endif\n",
+        "kernel core init SUSFS include"
+    )
+    init_call_anchor = "\t\tksu_throne_tracker_init();\n\n\t\tksu_ksud_init();"
+    init_call_replacement = (
+        "\t\tksu_throne_tracker_init();\n\n"
+        "#ifdef CONFIG_KSU_SUSFS\n"
+        "\t\tsusfs_init(); /* XEN-SUSFS-KSUN-COMPAT: init */\n"
+        "#endif\n\n"
+        "\t\tksu_ksud_init();"
+    )
+    init = replace_once(
+        init, init_call_anchor, init_call_replacement,
+        "kernel core init SUSFS initialization"
+    )
+
+    # Port the runtime link that the old SUSFS-aware KSUN branch had in its
+    # setresuid handler, but preserve this pin's two-argument ABI and manual hooks.
+    setuid_include_anchor = '#include "compat/kernel_compat.h"\n'
+    setuid = replace_once(
+        setuid, setuid_include_anchor,
+        setuid_include_anchor
+        + "\n#ifdef CONFIG_KSU_SUSFS\n"
+        + "#include <linux/cred.h>\n"
+        + "#include <linux/susfs.h>\n"
+        + "#include <linux/susfs_def.h>\n"
+        + "#include <linux/workqueue.h>\n"
+        + '#include "ksu.h"\n'
+        + '#include "selinux/selinux.h"\n'
+        + "#endif\n",
+        "setuid SUSFS includes"
+    )
+    setuid_function_start = "int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)\n{"
+    setuid_function_end = "\nvoid __init ksu_setuid_hook_init(void)"
+    if setuid.count(setuid_function_start) != 1:
+        raise RuntimeError("setuid hook: expected exactly one current two-argument function")
+    start = setuid.index(setuid_function_start)
+    end = setuid.find(setuid_function_end, start)
+    if end < 0:
+        raise RuntimeError("setuid hook: function end marker not found")
+    setuid = (
+        setuid[:start]
+        + SETUID_HELPERS
+        + "\n\n"
+        + SETUID_FUNCTION
+        + setuid[end:]
+    )
+    setuid = setuid.replace(
+        "int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)\n{",
+        "/* XEN-SUSFS-KSUN-COMPAT: setuid runtime */\n"
+        "int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)\n{",
+        1
+    )
+
     # Make the module build fail early when SUSFS is enabled without kernel-side sources.
     if "XEN-SUSFS-KSUN-COMPAT-BEGIN" in kbuild:
         raise RuntimeError("kernel/Kbuild already contains the XEN-SUSFS bridge")
@@ -353,6 +554,8 @@ def main() -> int:
     kbuild_path.write_text(kbuild, encoding="utf-8")
     selinux_path.write_text(selinux, encoding="utf-8")
     umount_path.write_text(umount, encoding="utf-8")
+    init_path.write_text(init, encoding="utf-8")
+    setuid_path.write_text(setuid, encoding="utf-8")
 
     print("Applied XEN-SUSFS v2.3.0 compatibility bridge.")
     print(f"KSUN revision retained: {actual_sha}")
