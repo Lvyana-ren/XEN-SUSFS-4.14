@@ -99,6 +99,11 @@ while IFS= read -r rel || [[ -n "$rel" ]]; do
   rm -f "$merged"
 done < "$SCOPE_FILE"
 
+# Normalize the Anymore-derived merge for Xen-Kernel's manual-hook flow.
+# This removes duplicate generic faccessat hook chunks but keeps SUSFS OPEN_REDIRECT.
+python3 "$REPO_ROOT/tools/normalize-susfs-candidate.py" \
+  "$TARGET_DIR" "$OUT_DIR/reports"
+
 # SUSFS build wiring: add the object line only when absent.
 python3 - "$TARGET_DIR/fs/Makefile" <<'PY'
 import sys
@@ -144,8 +149,16 @@ git -C "$TARGET_DIR" diff --binary --no-ext-diff > "$OUT_DIR/xen-susfs-kernel-in
   cat "$OUT_DIR/reports/missing-files.txt"
 } > "$OUT_DIR/README-CANDIDATE.txt"
 
-# Save applyability/whitespace diagnostics for review.
-git -C "$TARGET_DIR" diff --check > "$OUT_DIR/reports/diff-check.txt" 2>&1 || true
+# Save and enforce applyability/whitespace diagnostics after normalization.
+set +e
+git -C "$TARGET_DIR" diff --check > "$OUT_DIR/reports/diff-check.txt" 2>&1
+diff_check_status=$?
+set -e
+if [[ "$diff_check_status" -ne 0 ]]; then
+  cat "$OUT_DIR/reports/diff-check.txt" >&2
+  echo "::error::Candidate still contains whitespace errors; refusing to publish it as clean." >&2
+  exit 12
+fi
 
 echo "Candidate patch: $OUT_DIR/xen-susfs-kernel-integration-candidate.patch"
 echo "Base SHA: $BASE_COMMIT"
