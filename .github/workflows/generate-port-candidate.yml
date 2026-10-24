@@ -187,7 +187,10 @@ jobs:
           EOF
 
           git add patches/generated patches/ksun
-          git diff --cached --check
+          # Both source-tree diffs were checked with git diff --check before
+          # being serialized. Do not run diff --check on the .patch files
+          # themselves: unified-diff context prefixes (" space + tab") are
+          # patch syntax, not whitespace defects in the source tree.
           if ! git diff --cached --quiet; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
