@@ -151,6 +151,19 @@ def main() -> int:
     sys_path.write_text(sys_text, encoding="utf-8")
     report_lines.append("kernel/sys.c: retained setresuid handler with current KSUN (old_uid,new_uid) ABI")
 
+    # The Anymore reference uses the old SELinux domain name "su"; this
+    # KSUN pin identifies its own domain as "ksu". Keep the transition guard
+    # aligned with KERNEL_SU_CONTEXT in KernelSU-Next.
+    selinux_hooks_path = target / "security/selinux/hooks.c"
+    selinux_hooks = selinux_hooks_path.read_text(encoding="utf-8")
+    old_context = 'security_secctx_to_secid("u:r:su:s0", strlen("u:r:su:s0"), &ksu_sid);'
+    new_context = 'security_secctx_to_secid("u:r:ksu:s0", strlen("u:r:ksu:s0"), &ksu_sid);'
+    if selinux_hooks.count(old_context) != 1:
+        raise RuntimeError("security/selinux/hooks.c: expected one legacy su SELinux context")
+    selinux_hooks = selinux_hooks.replace(old_context, new_context, 1)
+    selinux_hooks_path.write_text(selinux_hooks, encoding="utf-8")
+    report_lines.append('security/selinux/hooks.c: aligned legacy "su" context to current KSUN "ksu" domain')
+
     # Restore the correct ARM64 capability and disabled-hook config. These are
     # deliberately different: HAVE_KPROBES describes platform capability;
     # KPROBES itself remains disabled for Xen-Kernel's manual-hook setup.
