@@ -1,0 +1,106 @@
+name: Validate current KSUN SUSFS compatibility overlay
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/apply-ksun-susfs-compat.py"
+      - "tools/normalize-susfs-candidate.py"
+      - "config/port-refs.env"
+      - ".github/workflows/validate-ksun-susfs-compat.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-ksun-susfs-compat
+  cancel-in-progress: false
+
+jobs:
+  validate-overlay:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout XEN-SUSFS-4.14 workspace
+        uses: actions/checkout@v4
+
+      - name: Load pinned refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          source config/port-refs.env
+          test "$KSUN_REPO" = "Lvyana-ren/KernelSU-Next"
+          test "$KSUN_SHA" = "465490a26667ba4cf00b3be975a7e28e53978829"
+          echo "KSUN_REPO=$KSUN_REPO" >> "$GITHUB_ENV"
+          echo "KSUN_REF=$KSUN_REF" >> "$GITHUB_ENV"
+          echo "KSUN_SHA=$KSUN_SHA" >> "$GITHUB_ENV"
+
+      - name: Checkout exact KSUN commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          KSUN_DIR="$RUNNER_TEMP/KernelSU-Next"
+          git clone --no-checkout "https://github.com/${KSUN_REPO}.git" "$KSUN_DIR"
+          git -C "$KSUN_DIR" fetch --no-tags origin "$KSUN_SHA"
+          git -C "$KSUN_DIR" checkout --detach FETCH_HEAD
+          ACTUAL="$(git -C "$KSUN_DIR" rev-parse HEAD)"
+          test "$ACTUAL" = "$KSUN_SHA" || {
+            echo "::error::KSUN SHA mismatch: expected $KSUN_SHA, got $ACTUAL"
+            exit 1
+          }
+          echo "KSUN_DIR=$KSUN_DIR" >> "$GITHUB_ENV"
+          echo "Verified KSUN commit: $ACTUAL"
+
+      - name: Validate adapter syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/apply-ksun-susfs-compat.py
+          python3 -m py_compile tools/normalize-susfs-candidate.py
+
+      - name: Apply compatibility overlay on temporary KSUN checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/apply-ksun-susfs-compat.py "$KSUN_DIR"
+          git -C "$KSUN_DIR" diff --check
+
+          grep -q 'config KSU_SUSFS' "$KSUN_DIR/kernel/Kconfig"
+          grep -q 'SUSFS_MAGIC' "$KSUN_DIR/kernel/supercall/supercall.c"
+          grep -q 'susfs_start_sdcard_monitor_fn' "$KSUN_DIR/kernel/supercall/dispatch.c"
+          grep -q 'susfs_is_current_ksu_domain' "$KSUN_DIR/kernel/selinux/selinux.c"
+          grep -q 'void try_umount' "$KSUN_DIR/kernel/feature/kernel_umount.c"
+          grep -q 'config KSU_MANUAL_HOOK' "$KSUN_DIR/kernel/Kconfig"
+
+          if git -C "$KSUN_DIR" diff --unified=0 -- kernel/Kconfig | grep -E '^-.*(KSU_MANUAL_HOOK|KSU_KPROBES_HOOK|KSU_SYSCALL_TABLE_HOOK)'; then
+            echo "::error::Compatibility overlay unexpectedly removed an existing hook-mode config."
+            exit 1
+          fi
+
+          mkdir -p ksun-overlay
+          git -C "$KSUN_DIR" diff --binary > ksun-overlay/ksun-susfs-compat.patch
+          git -C "$KSUN_DIR" diff --stat > ksun-overlay/diff-stat.txt
+          git -C "$KSUN_DIR" rev-parse HEAD > ksun-overlay/ksun-source-commit.txt
+          {
+            echo "KSUN repo: $KSUN_REPO"
+            echo "KSUN commit: $KSUN_SHA"
+            echo "Overlay applied to temporary checkout only."
+            echo "No KSUN branch was pushed or changed."
+            echo "git diff --check: PASS"
+            echo "Kconfig: CONFIG_KSU_SUSFS and feature symbols present"
+            echo "SUSFS_MAGIC bridge: present"
+            echo "Boot-completed monitor: present"
+            echo "Domain compatibility shim: present"
+            echo "try_umount export guard: present"
+            echo "Manual-hook config: retained"
+          } > ksun-overlay/VALIDATION.txt
+
+      - name: Upload validated KSUN overlay patch
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ksun-susfs-compat-overlay
+          path: ksun-overlay/
+          if-no-files-found: warn
+          retention-days: 30
