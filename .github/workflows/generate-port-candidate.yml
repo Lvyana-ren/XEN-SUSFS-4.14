@@ -19,29 +19,58 @@ jobs:
       - name: Checkout patch workspace
         uses: actions/checkout@v4
 
-      - name: Clone upstream base (Linux 4.14)
+      - name: Load pinned refs and checkout exact commits
         shell: bash
         run: |
           set -euo pipefail
-          git clone --depth=1 --single-branch --branch 16 \
-            https://github.com/AnymoreProject/android_kernel_vayu.git \
-            "$RUNNER_TEMP/kernel-base"
+          source config/port-refs.env
 
-      - name: Clone Xen-Kernel target
-        shell: bash
-        run: |
-          set -euo pipefail
-          git clone --depth=1 --single-branch --branch 16-KSUN_SuSFS \
-            https://github.com/Lvyana-ren/Xen-Kernel.git \
-            "$RUNNER_TEMP/kernel-target"
+          checkout_pinned_commit() {
+            local repo="$1"
+            local ref_label="$2"
+            local sha="$3"
+            local dest="$4"
 
-      - name: Clone Xen-SuSFS feature reference
-        shell: bash
-        run: |
-          set -euo pipefail
-          git clone --depth=1 --single-branch --branch 16-ksu \
-            https://github.com/Lvyana-ren/Xen-SuSFS.git \
-            "$RUNNER_TEMP/kernel-feature"
+            echo "::group::Checkout ${repo} @ ${sha}"
+            mkdir -p "$dest"
+            git -C "$dest" init
+            git -C "$dest" remote add origin "https://github.com/${repo}.git"
+
+            # Fetch the commit itself. Do not silently substitute the branch tip.
+            git -C "$dest" fetch --no-tags --depth=1 origin "$sha"
+            git -C "$dest" checkout --detach FETCH_HEAD
+
+            local actual
+            actual=$(git -C "$dest" rev-parse HEAD)
+            if [[ "$actual" != "$sha" ]]; then
+              echo "::error::Pinned SHA mismatch for ${repo} (label ${ref_label}): expected ${sha}, got ${actual}"
+              exit 1
+            fi
+
+            echo "Pinned ref label: ${ref_label}"
+            echo "Verified commit: ${actual}"
+            echo "::endgroup::"
+          }
+
+          checkout_pinned_commit "$BASE_REPO" "$BASE_REF" "$BASE_SHA" "$RUNNER_TEMP/kernel-base"
+          checkout_pinned_commit "$TARGET_REPO" "$TARGET_REF" "$TARGET_SHA" "$RUNNER_TEMP/kernel-target"
+          checkout_pinned_commit "$FEATURE_REPO" "$FEATURE_REF" "$FEATURE_SHA" "$RUNNER_TEMP/kernel-feature"
+
+          # Pass the exact expected SHAs to the generator and persist the refs in the next step.
+          {
+            echo "BASE_REPO=$BASE_REPO"
+            echo "BASE_REF=$BASE_REF"
+            echo "BASE_SHA=$BASE_SHA"
+            echo "TARGET_REPO=$TARGET_REPO"
+            echo "TARGET_REF=$TARGET_REF"
+            echo "TARGET_SHA=$TARGET_SHA"
+            echo "FEATURE_REPO=$FEATURE_REPO"
+            echo "FEATURE_REF=$FEATURE_REF"
+            echo "FEATURE_SHA=$FEATURE_SHA"
+            echo "EXPECTED_BASE_SHA=$BASE_SHA"
+            echo "EXPECTED_TARGET_SHA=$TARGET_SHA"
+            echo "EXPECTED_FEATURE_SHA=$FEATURE_SHA"
+          } >> "$GITHUB_ENV"
 
       - name: Generate three-way merge candidate
         shell: bash
@@ -53,7 +82,6 @@ jobs:
             "$RUNNER_TEMP/kernel-feature" \
             "$RUNNER_TEMP/output"
 
-          # Save the exact candidate separately from the untouched repository.
           mkdir -p "$GITHUB_WORKSPACE/port-candidate"
           cp -a "$RUNNER_TEMP/output/." "$GITHUB_WORKSPACE/port-candidate/"
 
