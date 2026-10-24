@@ -83,6 +83,13 @@ endmenu
 # XEN-SUSFS-KSUN-COMPAT-END
 '''
 
+DOMAIN_BRIDGE = r'''/* XEN-SUSFS-KSUN-COMPAT: adapt the SUSFS domain helper to current KSUN */
+bool susfs_is_current_ksu_domain(void)
+{
+	return is_ksu_domain();
+}
+'''
+
 REBOOT_BRIDGE = r'''#ifdef CONFIG_KSU_SUSFS
 	/*
 	 * XEN-SUSFS-KSUN-COMPAT: syscall bridge
@@ -233,17 +240,23 @@ def main() -> int:
     supercall_path = root / "kernel/supercall/supercall.c"
     dispatch_path = root / "kernel/supercall/dispatch.c"
     kbuild_path = root / "kernel/Kbuild"
+    selinux_path = root / "kernel/selinux/selinux.c"
+    umount_path = root / "kernel/feature/kernel_umount.c"
 
     kconfig = read_text(kconfig_path)
     supercall = read_text(supercall_path)
     dispatch = read_text(dispatch_path)
     kbuild = read_text(kbuild_path)
+    selinux = read_text(selinux_path)
+    umount = read_text(umount_path)
 
     markers = [
         "XEN-SUSFS-KSUN-COMPAT-BEGIN" in kconfig,
         "XEN-SUSFS-KSUN-COMPAT: syscall bridge" in supercall,
         "XEN-SUSFS-KSUN-COMPAT: boot monitor" in dispatch,
         "XEN-SUSFS-KSUN-COMPAT-BEGIN" in kbuild,
+        "XEN-SUSFS-KSUN-COMPAT: adapt the SUSFS domain helper" in selinux,
+        "XEN-SUSFS-KSUN-COMPAT: expose try_umount" in umount,
     ]
     if all(markers):
         print("XEN-SUSFS KSUN compatibility bridge is already applied.")
@@ -302,6 +315,32 @@ def main() -> int:
         "dispatch boot-completed monitor"
     )
 
+    # The SUSFS v2.3 source expects this helper from the previous KSUN layout.
+    selinux_anchor = r'''bool is_ksu_domain(void)
+{
+    return is_task_ksu_domain(current_cred());
+}
+'''
+    selinux = replace_once(
+        selinux, selinux_anchor, selinux_anchor + "\n" + DOMAIN_BRIDGE,
+        "SELinux current-domain compatibility bridge"
+    )
+
+    # The SUSFS source calls try_umount() when TRY_UMOUNT is enabled.
+    # Keep the helper private for builds without that feature.
+    umount_anchor = "static void try_umount(const char *mnt, int flags)\n{"
+    umount_replacement = (
+        "#if !defined(CONFIG_KSU_SUSFS) || !defined(CONFIG_KSU_SUSFS_TRY_UMOUNT)\n"
+        "static void try_umount(const char *mnt, int flags)\n"
+        "#else /* XEN-SUSFS-KSUN-COMPAT: expose try_umount for SUSFS */\n"
+        "void try_umount(const char *mnt, int flags)\n"
+        "#endif\n{"
+    )
+    umount = replace_once(
+        umount, umount_anchor, umount_replacement,
+        "kernel umount exported helper"
+    )
+
     # Make the module build fail early when SUSFS is enabled without kernel-side sources.
     if "XEN-SUSFS-KSUN-COMPAT-BEGIN" in kbuild:
         raise RuntimeError("kernel/Kbuild already contains the XEN-SUSFS bridge")
@@ -312,6 +351,8 @@ def main() -> int:
     supercall_path.write_text(supercall, encoding="utf-8")
     dispatch_path.write_text(dispatch, encoding="utf-8")
     kbuild_path.write_text(kbuild, encoding="utf-8")
+    selinux_path.write_text(selinux, encoding="utf-8")
+    umount_path.write_text(umount, encoding="utf-8")
 
     print("Applied XEN-SUSFS v2.3.0 compatibility bridge.")
     print(f"KSUN revision retained: {actual_sha}")
