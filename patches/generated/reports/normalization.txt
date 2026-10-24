@@ -1,3 +1,4 @@
+include/linux/susfs.h: fixed KSTAT_SPOOF_CTIME_TV_SEC to bit 8
 fs/open.c: removed generic faccessat hook; preserved SUSFS OPEN_REDIRECT changes
 fs/stat.c: removed generic KSUN stat hooks; Xen manual-hook script supplies the native hook
 kernel/sys.c: placed current KSUN setresuid hook after UID/security validation and immediately before commit_creds

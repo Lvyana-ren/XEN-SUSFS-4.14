@@ -3346,6 +3346,19 @@ index ab437dd2e..23d6a92ce 100644
  void seq_escape(struct seq_file *m, const char *s, const char *esc);
  
  void seq_hex_dump(struct seq_file *m, const char *prefix_str, int prefix_type,
+diff --git a/include/linux/susfs.h b/include/linux/susfs.h
+index f9ef61d99..17d7603c6 100644
+--- a/include/linux/susfs.h
++++ b/include/linux/susfs.h
+@@ -69,7 +69,7 @@ struct st_susfs_hide_sus_mnts_for_non_su_procs {
+ #define KSTAT_SPOOF_ATIME_TV_NSEC (1 << 5)
+ #define KSTAT_SPOOF_MTIME_TV_SEC (1 << 6)
+ #define KSTAT_SPOOF_MTIME_TV_NSEC (1 << 7)
+-#define KSTAT_SPOOF_CTIME_TV_SEC (1 < 8)
++#define KSTAT_SPOOF_CTIME_TV_SEC (1 << 8)
+ #define KSTAT_SPOOF_CTIME_TV_NSEC (1 << 9)
+ #define KSTAT_SPOOF_BLOCKS (1 << 10)
+ #define KSTAT_SPOOF_BLKSIZE (1 << 11)
 diff --git a/kernel/kallsyms.c b/kernel/kallsyms.c
 index 9a1cafc8d..a070595a7 100644
 --- a/kernel/kallsyms.c
