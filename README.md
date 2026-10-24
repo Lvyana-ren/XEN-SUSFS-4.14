@@ -39,6 +39,10 @@ The complete shell commands, conflict handling, and next steps are documented in
 
 The generator does not push to Xen-Kernel or modify the remote target branch. It verifies and reports the exact base, target, and feature commit SHAs in `reports/input-refs.txt`. Its output is only a candidate patch; it does not claim that every SUSFS feature is integrated or that a kernel build has passed.
 
+## Latest artifact audit — do not apply unchanged
+
+The first generated candidate has **32 textually clean files**, but a review found two integration blockers: `fs/open.c` and `fs/stat.c` duplicate hooks that the target manual-hook script rejects, and the currently pinned KSUN commit lacks the SUSFS Kconfig symbols. There are also five trailing-whitespace diagnostics. See [docs/ARTIFACT-REVIEW.md](docs/ARTIFACT-REVIEW.md) for the details. The artifact is not build-ready.
+
 ## Current blockers — read before building
 
 1. The KernelSU-Next commit pinned in the current Xen-Kernel workflow, `465490a26667ba4cf00b3be975a7e28e53978829`, does not declare `CONFIG_KSU_SUSFS` in `kernel/Kconfig`. The matching KSUN config/API/ioctl/userspace interface must be integrated and version-matched.
