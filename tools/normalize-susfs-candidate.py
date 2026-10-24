@@ -115,29 +115,29 @@ def main() -> int:
     # setresuid call needed by the manual-hook layout, but adapt the ABI.
     sys_path = target / "kernel/sys.c"
     sys_text = sys_path.read_text(encoding="utf-8")
-    sys_text = strip_once(
-        sys_text,
+    declaration_pattern = (
         r"\n#if defined\(CONFIG_KSU\) && !defined\(CONFIG_KSU_TAMPER_SYSCALL_TABLE\)\n"
         r"extern int ksu_handle_setresuid\(uid_t ruid, uid_t euid, uid_t suid\);\n"
-        r"#endif\n",
-        "kernel/sys.c legacy setresuid declaration",
+        r"#endif\n"
     )
-    sys_text = sys_text.replace(
-        "extern int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid);",
-        "extern int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid);",
-        1,
+    declaration_replacement = (
+        "\n#if defined(CONFIG_KSU) && !defined(CONFIG_KSU_TAMPER_SYSCALL_TABLE)\n"
+        "extern int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid);\n"
+        "#endif\n"
     )
+    sys_text, declaration_count = re.subn(
+        declaration_pattern, declaration_replacement, sys_text,
+        count=1, flags=re.MULTILINE
+    )
+    if declaration_count != 1:
+        raise RuntimeError("kernel/sys.c: expected one legacy setresuid declaration")
+
     sys_text = strip_once(
         sys_text,
         r"\n#if defined\(CONFIG_KSU\) && !defined\(CONFIG_KSU_TAMPER_SYSCALL_TABLE\)\n"
         r"\s*\(void\)ksu_handle_setresuid\(ruid, euid, suid\);\n"
         r"#endif\n",
         "kernel/sys.c legacy three-argument setresuid call",
-    )
-    sys_text = sys_text.replace(
-        "ksu_handle_setresuid(uid_t old_uid, uid_t new_uid);\n#endif",
-        "ksu_handle_setresuid(uid_t old_uid, uid_t new_uid);\n#endif",
-        1,
     )
     call = (
         "#if defined(CONFIG_KSU) && !defined(CONFIG_KSU_TAMPER_SYSCALL_TABLE)\n"
