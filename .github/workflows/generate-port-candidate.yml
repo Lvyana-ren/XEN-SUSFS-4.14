@@ -1,6 +1,14 @@
 name: Generate Xen SUSFS 4.14 port candidate
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/generate-port-candidate.sh"
+      - "tools/normalize-susfs-candidate.py"
+      - "patches/susfs-callsite-files.txt"
+      - "config/port-refs.env"
+      - ".github/workflows/generate-port-candidate.yml"
   workflow_dispatch:
 
 permissions:
