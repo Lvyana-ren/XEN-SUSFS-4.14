@@ -1,0 +1,20 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+Subject: [PATCH 2/2] susfs: fix ctime spoof flag bitmask
+
+KSTAT_SPOOF_CTIME_TV_SEC is a bit flag, following the adjacent 1 << n
+definitions. The comparison (1 < 8) evaluates to 1 and aliases bit 0.
+---
+ include/linux/susfs.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/include/linux/susfs.h b/include/linux/susfs.h
+--- a/include/linux/susfs.h
++++ b/include/linux/susfs.h
+@@ -69,7 +69,7 @@
+ #define KSTAT_SPOOF_MTIME_TV_SEC (1 << 6)
+ #define KSTAT_SPOOF_MTIME_TV_NSEC (1 << 7)
+-#define KSTAT_SPOOF_CTIME_TV_SEC (1 < 8)
++#define KSTAT_SPOOF_CTIME_TV_SEC (1 << 8)
+ #define KSTAT_SPOOF_CTIME_TV_NSEC (1 << 9)
+ #define KSTAT_SPOOF_BLOCKS (1 << 10)
+ #define KSTAT_SPOOF_BLKSIZE (1 << 11)

@@ -1,0 +1,66 @@
+name: Generate Xen SUSFS 4.14 port candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xen-susfs-4.14-candidate
+  cancel-in-progress: false
+
+jobs:
+  generate-candidate:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout patch workspace
+        uses: actions/checkout@v4
+
+      - name: Clone upstream base (Linux 4.14)
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth=1 --single-branch --branch 16 \
+            https://github.com/AnymoreProject/android_kernel_vayu.git \
+            "$RUNNER_TEMP/kernel-base"
+
+      - name: Clone Xen-Kernel target
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth=1 --single-branch --branch 16-KSUN_SuSFS \
+            https://github.com/Lvyana-ren/Xen-Kernel.git \
+            "$RUNNER_TEMP/kernel-target"
+
+      - name: Clone Xen-SuSFS feature reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth=1 --single-branch --branch 16-ksu \
+            https://github.com/Lvyana-ren/Xen-SuSFS.git \
+            "$RUNNER_TEMP/kernel-feature"
+
+      - name: Generate three-way merge candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/generate-port-candidate.sh \
+            "$RUNNER_TEMP/kernel-base" \
+            "$RUNNER_TEMP/kernel-target" \
+            "$RUNNER_TEMP/kernel-feature" \
+            "$RUNNER_TEMP/output"
+
+          # Save the exact candidate separately from the untouched repository.
+          cp -a "$RUNNER_TEMP/output/." "$GITHUB_WORKSPACE/port-candidate/"
+
+      - name: Upload candidate and audit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xen-susfs-4.14-candidate
+          path: port-candidate/
+          if-no-files-found: warn
+          retention-days: 14

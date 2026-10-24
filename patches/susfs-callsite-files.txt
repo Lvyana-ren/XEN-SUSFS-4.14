@@ -1,0 +1,31 @@
+# Files whose SUSFS-side delta is examined by the three-way generator.
+# Generic KernelSU syscall-hook files are intentionally omitted.
+fs/Makefile
+fs/namei.c
+fs/namespace.c
+fs/notify/fdinfo.c
+fs/open.c
+fs/proc/base.c
+fs/proc/cmdline.c
+fs/proc/fd.c
+fs/proc/task_mmu.c
+fs/proc/task_nommu.c
+fs/proc_namespace.c
+fs/readdir.c
+fs/seq_file.c
+fs/stat.c
+fs/statfs.c
+fs/super.c
+include/linux/kernel.h
+include/linux/mount.h
+include/linux/pkeys.h
+include/linux/sched.h
+include/linux/seq_file.h
+kernel/kallsyms.c
+kernel/sys.c
+lib/idr.c
+lib/vsprintf.c
+mm/memory.c
+mm/shmem.c
+security/selinux/avc.c
+security/selinux/hooks.c

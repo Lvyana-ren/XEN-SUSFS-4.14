@@ -1,0 +1,4 @@
+# Stage 1 only — source bootstrap + ctime flag fix.
+# Not a complete SUSFS integration series.
+patches/0001-susfs-v2.3.0-source-files.patch
+patches/0002-susfs-fix-ctime-bitmask.patch
