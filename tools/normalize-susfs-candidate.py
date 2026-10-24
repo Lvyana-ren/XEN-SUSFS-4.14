@@ -14,9 +14,13 @@ def normalize_whitespace(path: Path) -> None:
 
 
 def strip_once(text: str, pattern: str, label: str) -> str:
-    updated, count = re.subn(pattern, "\n", text, count=1, flags=re.MULTILINE)
-    if count != 1:
-        raise RuntimeError(f"{label}: expected exactly one matching block; found {count}")
+    return strip_count(text, pattern, label, 1)
+
+
+def strip_count(text: str, pattern: str, label: str, expected: int) -> str:
+    updated, count = re.subn(pattern, "\n", text, flags=re.MULTILINE)
+    if count != expected:
+        raise RuntimeError(f"{label}: expected {expected} matching blocks; found {count}")
     return updated
 
 
@@ -75,6 +79,77 @@ def main() -> int:
     )
     open_path.write_text(open_text, encoding="utf-8")
     report_lines.append("fs/open.c: removed generic faccessat hook; preserved SUSFS OPEN_REDIRECT changes")
+
+    # Remove generic KSUN stat hooks from the merged reference. Xen-Kernel's
+    # apply-ksun-manual-hooks.py adds the intended native newfstatat hook later.
+    stat_path = target / "fs/stat.c"
+    stat_text = stat_path.read_text(encoding="utf-8")
+    stat_text = strip_once(
+        stat_text,
+        r"\n#if defined\(CONFIG_KSU\) && !defined\(CONFIG_KSU_TAMPER_SYSCALL_TABLE\)\n"
+        r"extern int ksu_handle_stat\(int \*dfd, const char __user \*\*filename_user, int \*flags\);\n"
+        r"#endif\n",
+        "fs/stat.c generic KSUN stat declaration",
+    )
+    stat_text = strip_once(
+        stat_text,
+        r"\n#ifdef CONFIG_KSU\n"
+        r"extern __attribute__\(\(hot\)\) int ksu_handle_stat\(int \*dfd,\n"
+        r"\s*const char __user \*\*filename_user, int \*flags\);\n"
+        r"#endif\n",
+        "fs/stat.c generic KSUN stat declaration with hot attribute",
+    )
+    stat_text = strip_count(
+        stat_text,
+        r"\n#if defined\(CONFIG_KSU\) && !defined\(CONFIG_KSU_TAMPER_SYSCALL_TABLE\)\n"
+        r"\s*ksu_handle_stat\(&dfd, &filename, &flag\);\n"
+        r"#endif\n",
+        "fs/stat.c generic KSUN stat calls",
+        3,
+    )
+    stat_path.write_text(stat_text, encoding="utf-8")
+    report_lines.append("fs/stat.c: removed generic KSUN stat hooks; Xen manual-hook script supplies the native hook")
+
+    # KernelSU-Next's current hook handler takes (old_uid, new_uid), not the
+    # three-argument interface found in Anymore's reference kernel. Keep the
+    # setresuid call needed by the manual-hook layout, but adapt the ABI.
+    sys_path = target / "kernel/sys.c"
+    sys_text = sys_path.read_text(encoding="utf-8")
+    sys_text = strip_once(
+        sys_text,
+        r"\n#if defined\(CONFIG_KSU\) && !defined\(CONFIG_KSU_TAMPER_SYSCALL_TABLE\)\n"
+        r"extern int ksu_handle_setresuid\(uid_t ruid, uid_t euid, uid_t suid\);\n"
+        r"#endif\n",
+        "kernel/sys.c legacy setresuid declaration",
+    )
+    sys_text = sys_text.replace(
+        "extern int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid);",
+        "extern int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid);",
+        1,
+    )
+    sys_text = strip_once(
+        sys_text,
+        r"\n#if defined\(CONFIG_KSU\) && !defined\(CONFIG_KSU_TAMPER_SYSCALL_TABLE\)\n"
+        r"\s*\(void\)ksu_handle_setresuid\(ruid, euid, suid\);\n"
+        r"#endif\n",
+        "kernel/sys.c legacy three-argument setresuid call",
+    )
+    sys_text = sys_text.replace(
+        "ksu_handle_setresuid(uid_t old_uid, uid_t new_uid);\n#endif",
+        "ksu_handle_setresuid(uid_t old_uid, uid_t new_uid);\n#endif",
+        1,
+    )
+    call = (
+        "#if defined(CONFIG_KSU) && !defined(CONFIG_KSU_TAMPER_SYSCALL_TABLE)\n"
+        "\t(void)ksu_handle_setresuid(current_uid().val, ruid);\n"
+        "#endif"
+    )
+    marker = "kuid_t kruid, keuid, ksuid;\n"
+    if sys_text.count(marker) != 1:
+        raise RuntimeError("kernel/sys.c: cannot uniquely locate setresuid local declarations")
+    sys_text = sys_text.replace(marker, marker + call + "\n", 1)
+    sys_path.write_text(sys_text, encoding="utf-8")
+    report_lines.append("kernel/sys.c: retained setresuid handler with current KSUN (old_uid,new_uid) ABI")
 
     # Restore the correct ARM64 capability and disabled-hook config. These are
     # deliberately different: HAVE_KPROBES describes platform capability;
