@@ -121,7 +121,7 @@ def main() -> int:
         r"#endif\n"
     )
     declaration_replacement = (
-        "\n#if defined(CONFIG_KSU) && !defined(CONFIG_KSU_TAMPER_SYSCALL_TABLE)\n"
+        "\n#if defined(CONFIG_KSU) && defined(CONFIG_KSU_MANUAL_HOOK)\n"
         "extern int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid);\n"
         "#endif\n"
     )
@@ -140,7 +140,7 @@ def main() -> int:
         "kernel/sys.c legacy three-argument setresuid call",
     )
     call = (
-        "#if defined(CONFIG_KSU) && !defined(CONFIG_KSU_TAMPER_SYSCALL_TABLE)\n"
+        "#if defined(CONFIG_KSU) && defined(CONFIG_KSU_MANUAL_HOOK)\n"
         "\t(void)ksu_handle_setresuid(current_uid().val, ruid);\n"
         "#endif\n"
     )
