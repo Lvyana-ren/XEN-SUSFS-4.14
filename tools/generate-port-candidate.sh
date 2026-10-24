@@ -13,10 +13,52 @@ OUT_DIR=$(realpath -m "$4")
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SCOPE_FILE="$REPO_ROOT/patches/susfs-callsite-files.txt"
 
+BASE_COMMIT=$(git -C "$BASE_DIR" rev-parse HEAD)
+TARGET_COMMIT=$(git -C "$TARGET_DIR" rev-parse HEAD)
+FEATURE_COMMIT=$(git -C "$FEATURE_DIR" rev-parse HEAD)
+
+check_expected_sha() {
+  local label="$1"
+  local actual="$2"
+  local expected="$3"
+
+  if [[ -n "$expected" && "$actual" != "$expected" ]]; then
+    echo "::error::Pinned SHA mismatch for $label: expected $expected, got $actual" >&2
+    exit 10
+  fi
+}
+
+check_expected_sha "base" "$BASE_COMMIT" "${EXPECTED_BASE_SHA:-}"
+check_expected_sha "target" "$TARGET_COMMIT" "${EXPECTED_TARGET_SHA:-}"
+check_expected_sha "feature" "$FEATURE_COMMIT" "${EXPECTED_FEATURE_SHA:-}"
+
+# Never modify a target checkout that already contains work from the user.
+if [[ -n "$(git -C "$TARGET_DIR" status --porcelain)" ]]; then
+  echo "ERROR: Target checkout is not clean; refusing to generate a candidate." >&2
+  exit 11
+fi
+
 mkdir -p "$OUT_DIR/reports/conflicts" "$OUT_DIR/reports/merge"
 : > "$OUT_DIR/reports/clean-files.txt"
 : > "$OUT_DIR/reports/conflicts.txt"
 : > "$OUT_DIR/reports/missing-files.txt"
+
+cat > "$OUT_DIR/reports/input-refs.txt" <<EOF
+Base repository: ${BASE_REPO:-unknown}
+Base ref label: ${BASE_REF:-unknown}
+Base commit SHA: $BASE_COMMIT
+
+Target repository: ${TARGET_REPO:-unknown}
+Target ref label: ${TARGET_REF:-unknown}
+Target commit SHA: $TARGET_COMMIT
+
+Feature repository: ${FEATURE_REPO:-unknown}
+Feature ref label: ${FEATURE_REF:-unknown}
+Feature commit SHA: $FEATURE_COMMIT
+EOF
+
+# Keep a dedicated file for compatibility with the application guide.
+printf '%s\n' "$TARGET_COMMIT" > "$OUT_DIR/reports/target-baseline-commit.txt"
 
 while IFS= read -r rel || [[ -n "$rel" ]]; do
   [[ -z "$rel" || "$rel" =~ ^[[:space:]]*# ]] && continue
@@ -77,20 +119,20 @@ else:
     print("fs/Makefile: added SUSFS object line")
 PY
 
-# This patch is generated against the checked-out target HEAD.
+# Candidate patch is a worktree diff against the pinned target commit.
 git -C "$TARGET_DIR" diff --binary --no-ext-diff > "$OUT_DIR/xen-susfs-kernel-integration-candidate.patch"
-git -C "$TARGET_DIR" rev-parse HEAD > "$OUT_DIR/reports/target-baseline-commit.txt"
 
 {
   echo "Three-way SUSFS port candidate"
   echo
-  echo "Base: upstream AnymoreProject/android_kernel_vayu:16"
-  echo "Target: Xen-Kernel:16-KSUN_SuSFS"
-  echo "Feature reference: Xen-SuSFS:16-ksu"
+  echo "Base: ${BASE_REPO:-unknown} @ $BASE_COMMIT (${BASE_REF:-unknown})"
+  echo "Target: ${TARGET_REPO:-unknown} @ $TARGET_COMMIT (${TARGET_REF:-unknown})"
+  echo "Feature reference: ${FEATURE_REPO:-unknown} @ $FEATURE_COMMIT (${FEATURE_REF:-unknown})"
   echo
+  echo "These SHA values are also recorded in reports/input-refs.txt."
   echo "This is a candidate. A clean text merge does not prove semantic correctness or buildability."
   echo "Files with conflicts are unchanged in TARGET_DIR and saved under reports/conflicts/."
-  echo "Review the patch for unrelated reference changes before applying."
+  echo "Review the generated patch for unrelated changes before applying."
   echo
   echo "Cleanly merged files:"
   cat "$OUT_DIR/reports/clean-files.txt"
@@ -102,10 +144,13 @@ git -C "$TARGET_DIR" rev-parse HEAD > "$OUT_DIR/reports/target-baseline-commit.t
   cat "$OUT_DIR/reports/missing-files.txt"
 } > "$OUT_DIR/README-CANDIDATE.txt"
 
-# Applyability sanity check against the exact target tree HEAD.
+# Save applyability/whitespace diagnostics for review.
 git -C "$TARGET_DIR" diff --check > "$OUT_DIR/reports/diff-check.txt" 2>&1 || true
 
 echo "Candidate patch: $OUT_DIR/xen-susfs-kernel-integration-candidate.patch"
+echo "Base SHA: $BASE_COMMIT"
+echo "Target SHA: $TARGET_COMMIT"
+echo "Feature SHA: $FEATURE_COMMIT"
 echo "Clean files: $(wc -l < "$OUT_DIR/reports/clean-files.txt")"
 echo "Conflicts: $(wc -l < "$OUT_DIR/reports/conflicts.txt")"
 echo "Review required before use."
