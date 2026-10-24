@@ -1,6 +1,7 @@
 # Files whose SUSFS-side delta is examined by the three-way generator.
 # Generic KernelSU syscall-hook files are intentionally omitted.
 fs/Makefile
+fs/internal.h
 fs/namei.c
 fs/namespace.c
 fs/notify/fdinfo.c
@@ -8,6 +9,7 @@ fs/open.c
 fs/proc/base.c
 fs/proc/cmdline.c
 fs/proc/fd.c
+fs/proc/internal.h
 fs/proc/task_mmu.c
 fs/proc/task_nommu.c
 fs/proc_namespace.c
@@ -29,3 +31,4 @@ mm/memory.c
 mm/shmem.c
 security/selinux/avc.c
 security/selinux/hooks.c
+arch/arm64/configs/vayu_defconfig
