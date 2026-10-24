@@ -49,6 +49,23 @@ def main() -> int:
 
     report_lines: list[str] = []
 
+    # Fix a confirmed bitmask typo in the imported v2.3.0 header. Keeping the
+    # intended bit position is necessary to avoid aliasing ctime spoofing to
+    # the inode flag. The matching userspace SUSFS implementation must use the
+    # same bit definition.
+    susfs_header_path = target / "include/linux/susfs.h"
+    susfs_header = susfs_header_path.read_text(encoding="utf-8")
+    bad_ctime_flag = "#define KSTAT_SPOOF_CTIME_TV_SEC (1 < 8)"
+    good_ctime_flag = "#define KSTAT_SPOOF_CTIME_TV_SEC (1 << 8)"
+    if susfs_header.count(bad_ctime_flag) == 1:
+        susfs_header = susfs_header.replace(bad_ctime_flag, good_ctime_flag, 1)
+        susfs_header_path.write_text(susfs_header, encoding="utf-8")
+        report_lines.append("include/linux/susfs.h: fixed KSTAT_SPOOF_CTIME_TV_SEC to bit 8")
+    elif susfs_header.count(good_ctime_flag) == 1:
+        report_lines.append("include/linux/susfs.h: ctime spoof flag already uses bit 8")
+    else:
+        raise RuntimeError("include/linux/susfs.h: expected exactly one known ctime spoof flag definition")
+
     # Keep SUSFS OPEN_REDIRECT edits in fs/open.c, but remove Anymore's generic
     # faccessat hook. Xen-Kernel inserts that hook with scripts/apply-ksun-manual-hooks.py.
     open_path = target / "fs/open.c"
