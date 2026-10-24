@@ -72,6 +72,10 @@ jobs:
           grep -q 'susfs_is_current_ksu_domain' "$KSUN_DIR/kernel/selinux/selinux.c"
           grep -q 'void try_umount' "$KSUN_DIR/kernel/feature/kernel_umount.c"
           grep -q 'config KSU_MANUAL_HOOK' "$KSUN_DIR/kernel/Kconfig"
+          grep -q 'susfs_init();' "$KSUN_DIR/kernel/core/init.c"
+          grep -q 'susfs_try_umount(new_uid);' "$KSUN_DIR/kernel/hook/setuid_hook.c"
+          grep -q 'susfs_set_current_proc_umounted();' "$KSUN_DIR/kernel/hook/setuid_hook.c"
+          grep -q 'is_zygote(current_cred())' "$KSUN_DIR/kernel/hook/setuid_hook.c"
 
           if git -C "$KSUN_DIR" diff --unified=0 -- kernel/Kconfig | grep -E '^-.*(KSU_MANUAL_HOOK|KSU_KPROBES_HOOK|KSU_SYSCALL_TABLE_HOOK)'; then
             echo "::error::Compatibility overlay unexpectedly removed an existing hook-mode config."
