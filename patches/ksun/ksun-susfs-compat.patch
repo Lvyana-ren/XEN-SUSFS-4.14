@@ -1,0 +1,460 @@
+diff --git a/kernel/Kbuild b/kernel/Kbuild
+index e48222e..b185803 100644
+--- a/kernel/Kbuild
++++ b/kernel/Kbuild
+@@ -331,3 +331,13 @@ ccflags-y += -Wno-strict-prototypes -Wno-int-conversion -Wno-gcc-compat -Wno-mis
+ ccflags-y += -Wno-declaration-after-statement -Wno-unused-function -Wno-unused-variable
+ 
+ # Keep a new line here!! Because someone may append config
++
++# XEN-SUSFS-KSUN-COMPAT-BEGIN
++ifeq ($(CONFIG_KSU_SUSFS),y)
++ifeq ($(shell test -f $(srctree)/fs/susfs.c -a -f $(srctree)/include/linux/susfs.h && echo yes),)
++$(error CONFIG_KSU_SUSFS=y but SUSFS kernel sources are missing)
++endif
++SUSFS_VERSION := $(shell sed -n 's/^#define SUSFS_VERSION "\([^"]*\)".*/\1/p' $(srctree)/include/linux/susfs.h)
++$(info -- XEN-SUSFS compatibility bridge enabled; SUSFS_VERSION=$(SUSFS_VERSION))
++endif
++# XEN-SUSFS-KSUN-COMPAT-END
+diff --git a/kernel/Kconfig b/kernel/Kconfig
+index 946966d..df3b158 100644
+--- a/kernel/Kconfig
++++ b/kernel/Kconfig
+@@ -72,4 +72,74 @@ config KSU_SYSCALL_TABLE_HOOK
+ 
+ endchoice
+ 
++
++# XEN-SUSFS-KSUN-COMPAT-BEGIN
++menu "KernelSU - SUSFS"
++
++config KSU_SUSFS
++    bool "KernelSU addon - SUSFS"
++    depends on KSU
++    depends on THREAD_INFO_IN_TASK
++    default y
++    help
++        Enable the SUSFS v2.3.0 interface in KernelSU-Next.
++
++config KSU_SUSFS_SUS_PATH
++    bool "Enable SUS_PATH"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_SUS_MOUNT
++    bool "Enable SUS_MOUNT"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_SUS_KSTAT
++    bool "Enable SUS_KSTAT"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_TRY_UMOUNT
++    bool "Enable SUSFS try_umount"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_SPOOF_UNAME
++    bool "Enable uname spoofing"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_ENABLE_LOG
++    bool "Enable SUSFS kernel logging"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
++    bool "Hide KernelSU/SUSFS symbols from kallsyms"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
++    bool "Enable cmdline/bootconfig spoofing"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_OPEN_REDIRECT
++    bool "Enable open redirect"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_SUS_MAP
++    bool "Enable SUS_MAP"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_SUS_MEMFD
++    bool "Enable SUS_MEMFD (experimental)"
++    depends on KSU_SUSFS
++    default n
++
++endmenu
++# XEN-SUSFS-KSUN-COMPAT-END
++
+ endmenu
+diff --git a/kernel/core/init.c b/kernel/core/init.c
+index 9be0987..4bd5bd2 100644
+--- a/kernel/core/init.c
++++ b/kernel/core/init.c
+@@ -24,6 +24,10 @@
+ #include "feature/shell_su_adb_only.h"
+ #include "feature/adb_root.h"
+ 
++#ifdef CONFIG_KSU_SUSFS
++#include <linux/susfs.h> /* XEN-SUSFS-KSUN-COMPAT: init include */
++#endif
++
+ extern void __init ksu_lsm_hook_init(void);
+ extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
+ 					void *argv, void *envp, int *flags);
+@@ -187,6 +191,10 @@ int __init kernelsu_init(void)
+ 
+ 		ksu_throne_tracker_init();
+ 
++#ifdef CONFIG_KSU_SUSFS
++		susfs_init(); /* XEN-SUSFS-KSUN-COMPAT: init */
++#endif
++
+ 		ksu_ksud_init();
+ 
+ 		ksu_file_wrapper_init();
+diff --git a/kernel/feature/kernel_umount.c b/kernel/feature/kernel_umount.c
+index 275dde8..338e1f1 100644
+--- a/kernel/feature/kernel_umount.c
++++ b/kernel/feature/kernel_umount.c
+@@ -79,7 +79,11 @@ static void ksu_sys_umount(const char *mnt, int flags)
+ 
+ #endif
+ 
++#if !defined(CONFIG_KSU_SUSFS) || !defined(CONFIG_KSU_SUSFS_TRY_UMOUNT)
+ static void try_umount(const char *mnt, int flags)
++#else /* XEN-SUSFS-KSUN-COMPAT: expose try_umount for SUSFS */
++void try_umount(const char *mnt, int flags)
++#endif
+ {
+ 	struct path path;
+ 	int err = kern_path(mnt, 0, &path);
+diff --git a/kernel/hook/setuid_hook.c b/kernel/hook/setuid_hook.c
+index 3dddf93..a64c278 100644
+--- a/kernel/hook/setuid_hook.c
++++ b/kernel/hook/setuid_hook.c
+@@ -26,55 +26,149 @@
+ #include "feature/kernel_umount.h"
+ #include "compat/kernel_compat.h"
+ 
++#ifdef CONFIG_KSU_SUSFS
++#include <linux/cred.h>
++#include <linux/susfs.h>
++#include <linux/susfs_def.h>
++#include <linux/workqueue.h>
++#include "ksu.h"
++#include "selinux/selinux.h"
++#endif
++
++#ifdef CONFIG_KSU_SUSFS
++static inline bool is_zygote_isolated_service_uid(uid_t uid)
++{
++	uid %= 100000;
++	return uid >= 99000 && uid < 100000;
++}
++
++static inline bool is_zygote_normal_app_uid(uid_t uid)
++{
++	uid %= 100000;
++	return uid >= 10000 && uid < 20000;
++}
++
++extern struct work_struct susfs_extra_works;
++#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
++extern void susfs_try_umount(uid_t uid);
++#endif
++
++struct susfs_handle_setuid_tw {
++	struct callback_head cb;
++};
++
++static void susfs_handle_setuid_tw_func(struct callback_head *cb)
++{
++	struct susfs_handle_setuid_tw *tw =
++		container_of(cb, struct susfs_handle_setuid_tw, cb);
++
++	if (ksu_cred) {
++		const struct cred *saved = override_creds(ksu_cred);
++		revert_creds(saved);
++	}
++	kfree(tw);
++}
++
++static void ksu_handle_extra_susfs_work(void)
++{
++	struct susfs_handle_setuid_tw *tw;
++
++	if (!ksu_cred)
++		return;
++
++	tw = kzalloc(sizeof(*tw), GFP_ATOMIC);
++	if (!tw) {
++		pr_err("susfs: not enough memory for deferred work\n");
++		return;
++	}
++
++	if (!schedule_work(&susfs_extra_works)) {
++		kfree(tw);
++		return;
++	}
++
++	tw->cb.func = susfs_handle_setuid_tw_func;
++	if (task_work_add(current, &tw->cb, TWA_RESUME)) {
++		kfree(tw);
++		pr_err("susfs: failed to add deferred setuid task_work\n");
++	}
++}
++#endif /* CONFIG_KSU_SUSFS */
++
++/* XEN-SUSFS-KSUN-COMPAT: setuid runtime */
+ int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
+ {
+-    // we rely on the fact that zygote always call setresuid(3) with same uids
++    // We only process zygote-originated UID transitions for SUSFS.
++#ifdef CONFIG_KSU_SUSFS
++    if (!is_zygote(current_cred()))
++        return 0;
++#endif
+ 
+     pr_info("handle_setresuid from %d to %d\n", old_uid, new_uid);
+ 
+     if (unlikely(is_uid_manager(new_uid))) {
+-
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+         if (current->seccomp.mode == SECCOMP_MODE_FILTER && current->seccomp.filter) {
+             ksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);
+         }
+ #else
+-		disable_seccomp();
++        disable_seccomp();
+ #endif
+ 
+ #ifdef KSU_KPROBES_HOOK
+         ksu_set_task_tracepoint_flag(current);
+ #endif
+-
+         pr_info("install fd for manager: %d\n", new_uid);
+         ksu_install_fd();
+         return 0;
+     }
+ 
++#ifdef CONFIG_KSU_SUSFS
++    /*
++     * Match the legacy SUSFS flow: isolated service UIDs need isolation too,
++     * while normal app UIDs are processed when the global KSU policy requests
++     * mount isolation. Run these before ordinary allowlist handling.
++     */
++    if (is_zygote_isolated_service_uid(new_uid) ||
++        (is_zygote_normal_app_uid(new_uid) && ksu_uid_should_umount(new_uid)))
++        goto do_susfs_umount;
++#endif
++
+     if (ksu_is_allow_uid_for_current(new_uid)) {
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+         if (current->seccomp.mode == SECCOMP_MODE_FILTER && current->seccomp.filter) {
+             ksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);
+         }
+ #else
+-		disable_seccomp();
++        disable_seccomp();
+ #endif
+ 
+ #ifdef KSU_KPROBES_HOOK
+-		ksu_set_task_tracepoint_flag(current);
++        ksu_set_task_tracepoint_flag(current);
+ #endif
+-	} else {
++    } else {
+ #ifdef KSU_KPROBES_HOOK
+-		ksu_clear_task_tracepoint_flag_if_needed(current);
++        ksu_clear_task_tracepoint_flag_if_needed(current);
+ #endif
+     }
+ 
+-    // Handle kernel umount
++#ifndef CONFIG_KSU_SUSFS
+     ksu_handle_umount(old_uid, new_uid);
++#endif
++    return 0;
+ 
++#ifdef CONFIG_KSU_SUSFS
++do_susfs_umount:
++#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
++    susfs_try_umount(new_uid);
++#else
++    ksu_handle_umount(old_uid, new_uid);
++#endif
++    ksu_handle_extra_susfs_work();
++    susfs_set_current_proc_umounted();
+     return 0;
++#endif
+ }
+-
+ void __init ksu_setuid_hook_init(void)
+ {
+ 	ksu_kernel_umount_init();
+diff --git a/kernel/selinux/selinux.c b/kernel/selinux/selinux.c
+index 258ca81..252e4e6 100644
+--- a/kernel/selinux/selinux.c
++++ b/kernel/selinux/selinux.c
+@@ -255,6 +255,12 @@ bool is_ksu_domain(void)
+     return is_task_ksu_domain(current_cred());
+ }
+ 
++/* XEN-SUSFS-KSUN-COMPAT: adapt the SUSFS domain helper to current KSUN */
++bool susfs_is_current_ksu_domain(void)
++{
++	return is_ksu_domain();
++}
++
+ bool is_zygote(const struct cred *cred)
+ {
+     return is_sid_match(cred, cached_zygote_sid, ZYGOTE_CONTEXT);
+diff --git a/kernel/supercall/dispatch.c b/kernel/supercall/dispatch.c
+index 12e19c5..6381cf5 100644
+--- a/kernel/supercall/dispatch.c
++++ b/kernel/supercall/dispatch.c
+@@ -6,6 +6,9 @@
+ #include <linux/version.h>
+ #include <linux/thread_info.h>
+ 
++#ifdef CONFIG_KSU_SUSFS
++#include <linux/susfs.h> /* XEN-SUSFS-KSUN-COMPAT: include */
++#endif
+ #include "uapi/supercall.h"
+ #include "supercall/internal.h"
+ #include "arch.h" // IWYU pragma: keep
+@@ -133,6 +136,9 @@ static int do_report_event(void __user *arg)
+ 			} else {
+ 				pr_info("boot_complete triggered\n");
+ 				on_boot_completed();
++#ifdef CONFIG_KSU_SUSFS
++				susfs_start_sdcard_monitor_fn(); /* XEN-SUSFS-KSUN-COMPAT: boot monitor */
++#endif
+ 			}
+ 		}
+ 		break;
+diff --git a/kernel/supercall/supercall.c b/kernel/supercall/supercall.c
+index 9c7ac7b..31f04f3 100644
+--- a/kernel/supercall/supercall.c
++++ b/kernel/supercall/supercall.c
+@@ -12,6 +12,10 @@
+ #include <linux/version.h>
+ #include <linux/utsname.h> // utsname() and uts_sem
+ 
++#ifdef CONFIG_KSU_SUSFS
++#include <linux/susfs.h> /* XEN-SUSFS-KSUN-COMPAT: include */
++#endif
++
+ #include "uapi/supercall.h"
+ #include "supercall/internal.h"
+ #include "arch.h"
+@@ -131,6 +135,100 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
+ 		magic2);
+ #endif
+ 
++#ifdef CONFIG_KSU_SUSFS
++	/*
++	 * XEN-SUSFS-KSUN-COMPAT: syscall bridge
++	 * Keep the SUSFS_MAGIC ABI used by ksu_susfs userspace while using
++	 * this KSUN revision's existing manual-hook entry point.
++	 */
++	if (magic2 == SUSFS_MAGIC && current_uid().val == 0) {
++#ifdef CONFIG_KSU_SUSFS_SUS_PATH
++		if (cmd == CMD_SUSFS_ADD_SUS_PATH) {
++			susfs_add_sus_path(arg);
++			return 0;
++		}
++		if (cmd == CMD_SUSFS_ADD_SUS_PATH_LOOP) {
++			susfs_add_sus_path_loop(arg);
++			return 0;
++		}
++#endif
++#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
++		if (cmd == CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS) {
++			susfs_set_hide_sus_mnts_for_non_su_procs(arg);
++			return 0;
++		}
++#endif
++#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
++		if (cmd == CMD_SUSFS_ADD_SUS_KSTAT ||
++		    cmd == CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY) {
++			susfs_add_sus_kstat(arg);
++			return 0;
++		}
++		if (cmd == CMD_SUSFS_UPDATE_SUS_KSTAT) {
++			susfs_update_sus_kstat(arg);
++			return 0;
++		}
++#endif
++#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
++		if (cmd == CMD_SUSFS_ADD_TRY_UMOUNT) {
++			susfs_add_try_umount(arg);
++			return 0;
++		}
++#endif
++#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
++		if (cmd == CMD_SUSFS_SET_UNAME) {
++			susfs_set_uname(arg);
++			return 0;
++		}
++#endif
++#ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
++		if (cmd == CMD_SUSFS_ENABLE_LOG) {
++			susfs_enable_log(arg);
++			return 0;
++		}
++#endif
++#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
++		if (cmd == CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG) {
++			susfs_set_cmdline_or_bootconfig(arg);
++			return 0;
++		}
++#endif
++#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
++		if (cmd == CMD_SUSFS_ADD_OPEN_REDIRECT) {
++			susfs_add_open_redirect(arg);
++			return 0;
++		}
++#endif
++#ifdef CONFIG_KSU_SUSFS_SUS_MAP
++		if (cmd == CMD_SUSFS_ADD_SUS_MAP) {
++			susfs_add_sus_map(arg);
++			return 0;
++		}
++#endif
++#ifdef CONFIG_KSU_SUSFS_SUS_MEMFD
++		if (cmd == CMD_SUSFS_ADD_SUS_MEMFD)
++			return susfs_add_sus_memfd(arg);
++#endif
++		if (cmd == CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING) {
++			susfs_set_avc_log_spoofing(arg);
++			return 0;
++		}
++		if (cmd == CMD_SUSFS_SHOW_ENABLED_FEATURES) {
++			susfs_get_enabled_features(arg);
++			return 0;
++		}
++		if (cmd == CMD_SUSFS_SHOW_VARIANT) {
++			susfs_show_variant(arg);
++			return 0;
++		}
++		if (cmd == CMD_SUSFS_SHOW_VERSION) {
++			susfs_show_version(arg);
++			return 0;
++		}
++		return 0;
++	}
++#endif /* CONFIG_KSU_SUSFS */
++
+ 	// Check if this is a request to install KSU fd
+ 	if (magic2 == KSU_INSTALL_MAGIC2) {
+ 		struct ksu_install_fd_tw *tw;

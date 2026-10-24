@@ -1,0 +1,9 @@
+ kernel/Kbuild                  |  10 ++++
+ kernel/Kconfig                 |  70 +++++++++++++++++++++++++
+ kernel/core/init.c             |   8 +++
+ kernel/feature/kernel_umount.c |   4 ++
+ kernel/hook/setuid_hook.c      | 114 +++++++++++++++++++++++++++++++++++++----
+ kernel/selinux/selinux.c       |   6 +++
+ kernel/supercall/dispatch.c    |   6 +++
+ kernel/supercall/supercall.c   |  98 +++++++++++++++++++++++++++++++++++
+ 8 files changed, 306 insertions(+), 10 deletions(-)

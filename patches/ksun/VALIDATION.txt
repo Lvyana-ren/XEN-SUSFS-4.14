@@ -1,0 +1,8 @@
+KSUN repo: Lvyana-ren/KernelSU-Next
+KSUN commit: 465490a26667ba4cf00b3be975a7e28e53978829
+Overlay applied to temporary checkout only.
+No KSUN branch was pushed or changed.
+git diff --check: PASS
+SUSFS Kconfig/API bridge: PASS
+Domain shim and try_umount export: PASS
+Manual-hook config preserved.

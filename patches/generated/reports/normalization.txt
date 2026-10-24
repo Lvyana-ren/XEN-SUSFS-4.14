@@ -1,0 +1,13 @@
+fs/open.c: removed generic faccessat hook; preserved SUSFS OPEN_REDIRECT changes
+fs/stat.c: removed generic KSUN stat hooks; Xen manual-hook script supplies the native hook
+kernel/sys.c: placed current KSUN setresuid hook after UID/security validation and immediately before commit_creds
+security/selinux/hooks.c: aligned legacy "su" context to current KSUN "ksu" domain
+vayu_defconfig: kept CONFIG_KPROBES disabled, restored CONFIG_HAVE_KPROBES=y, removed invalid KPROBE*=n assignments, ensured KSU/SUSFS symbols
+fs/namespace.c: normalized trailing whitespace
+fs/open.c: normalized trailing whitespace
+fs/proc/base.c: normalized trailing whitespace
+fs/proc/task_mmu.c: normalized trailing whitespace
+fs/proc/task_nommu.c: normalized trailing whitespace
+fs/readdir.c: normalized trailing whitespace
+include/linux/mount.h: normalized trailing whitespace
+lib/vsprintf.c: normalized trailing whitespace
