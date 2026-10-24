@@ -52,7 +52,7 @@ def main() -> int:
     open_text = strip_once(
         open_text,
         r"\n#ifdef CONFIG_KSU\n"
-        r"extern __attribute__\(hot\) int ksu_handle_faccessat\(int \*dfd,\n"
+        r"extern __attribute__\(\(hot\)\) int ksu_handle_faccessat\(int \*dfd,\n"
         r"\s*const char __user \*\*filename_user, int \*mode, int \*flags\);\n"
         r"#endif\n",
         "fs/open.c legacy faccessat declaration",
@@ -60,7 +60,7 @@ def main() -> int:
     open_text = strip_once(
         open_text,
         r"\n#if defined\(CONFIG_KSU\) && !defined\(CONFIG_KSU_TAMPER_SYSCALL_TABLE\)\n"
-        r"__attribute__\(hot\)\n"
+        r"__attribute__\(\(hot\)\)\n"
         r"extern int ksu_handle_faccessat\(int \*dfd, const char __user \*\*filename_user,\n"
         r"\s*int \*mode, int \*flags\);\n"
         r"#endif\n",
