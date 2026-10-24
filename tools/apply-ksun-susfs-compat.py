@@ -344,7 +344,7 @@ def main() -> int:
     # Make the module build fail early when SUSFS is enabled without kernel-side sources.
     if "XEN-SUSFS-KSUN-COMPAT-BEGIN" in kbuild:
         raise RuntimeError("kernel/Kbuild already contains the XEN-SUSFS bridge")
-    kbuild = kbuild.rstrip() + "\n\n" + KBUILD_BLOCK.lstrip() + "\n"
+    kbuild = kbuild.rstrip() + "\n\n" + KBUILD_BLOCK.strip() + "\n"
 
     # All anchors are validated before any file is written.
     kconfig_path.write_text(kconfig, encoding="utf-8")
